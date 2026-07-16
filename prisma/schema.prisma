@@ -1,0 +1,209 @@
+// SMART ZONE — Prisma schema
+// Dev default: SQLite (zero setup). For production, switch provider to "postgresql"
+// and set DATABASE_URL to a real Postgres connection string — see README.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── AUTH ─────────────────────────
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String // bcrypt hash — plaintext password is NEVER stored
+  role         String   @default("admin") // "admin" | "superadmin"
+  totpSecret   String? // مشفّر بـ AES-256-GCM (src/lib/encryption.ts)، مش نص صريح
+  totpEnabled  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  supportReplies SupportReply[]
+  auditLogs      AuditLog[]
+}
+
+// ───────────────────────── CODES ─────────────────────────
+
+model Code {
+  id            String    @id @default(uuid())
+  codeHash      String    @unique // HMAC-SHA256(code, CODE_PEPPER) — deterministic, lookup-safe, never plaintext
+  codeLast4     String // last 4 chars of the plaintext code, for admin display/search only
+  type          String // "student" | "trial"
+  name          String? // null for trial codes
+  track         String // "SCI" | "MATH" | "LIT"
+  status        String    @default("active") // "active" | "blocked"
+  deviceId      String? // hash of the device fingerprint (see src/lib/deviceFingerprint.ts) — bound on first successful login, never the raw fingerprint
+  duration      String? // "1H" | "1D" — trial codes only
+  violationCount Int      @default(0) // tamper-detection strikes, resets on admin reset
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime
+  lastLoginAt   DateTime?
+
+  sessions      Session[]
+  violations    SecurityViolation[]
+  supportThreads SupportThread[]
+
+  @@index([status])
+  @@index([track])
+}
+
+model Session {
+  id           String    @id @default(uuid())
+  codeId       String
+  code         Code      @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  deviceId     String
+  refreshHash  String // hash of the refresh token, never stored plaintext
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+  userAgent    String?
+  ip           String?
+
+  @@index([codeId])
+}
+
+// ───────────────────── SECURITY / AUDIT ─────────────────────
+
+// Server-detected tampering only — never triggered by simply opening DevTools.
+// Examples: JWT claims vs. request body mismatch, forged subscription/role fields,
+// stale/blacklisted refresh token reuse, CSRF token mismatch on a mutating request.
+model SecurityViolation {
+  id        String   @id @default(uuid())
+  codeId    String?
+  code      Code?    @relation(fields: [codeId], references: [id], onDelete: SetNull)
+  sessionId String?
+  type      String // "LOCALSTORAGE_TAMPER" | "COOKIE_TAMPER" | "FORGED_REQUEST" | "CLAIM_MISMATCH" | "CSRF_FAIL" | ...
+  detail    String?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([codeId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorType  String // "admin" | "student" | "system"
+  actorId    String? // AdminUser.id or Code.id
+  admin      AdminUser? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  adminId    String?
+  action     String // "ADMIN_LOGIN" | "CODE_CREATE" | "CODE_BLOCK" | "CODE_RENEW" | "STUDENT_LOGIN_FAIL" | ...
+  targetType String?
+  targetId   String?
+  metadata   String? // JSON string
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ───────────────────────── FAQ ─────────────────────────
+
+model Faq {
+  id        String   @id @default(uuid())
+  question  String
+  answer    String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+// ───────────────────── SUPPORT (real two-way thread) ─────────────────────
+
+model SupportThread {
+  id        String   @id @default(uuid())
+  codeId    String?
+  code      Code?    @relation(fields: [codeId], references: [id], onDelete: SetNull)
+  name      String?
+  track     String?
+  status    String   @default("open") // "open" | "resolved"
+  createdAt DateTime @default(now())
+
+  replies SupportReply[]
+}
+
+model SupportReply {
+  id        String   @id @default(uuid())
+  threadId  String
+  thread    SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender    String // "student" | "admin"
+  adminId   String?
+  admin     AdminUser? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([threadId])
+}
+
+// ───────────────────── CONTENT HIERARCHY ─────────────────────
+// Track → Subject → Teacher → Course (month) → Day → Lesson (single video)
+
+model Subject {
+  id        String   @id @default(uuid())
+  name      String
+  track     String // "SCI" | "MATH" | "LIT"
+  imageUrl  String? // admin-provided image link
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  teachers Teacher[]
+
+  @@index([track])
+}
+
+model Teacher {
+  id        String   @id @default(uuid())
+  subjectId String
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  name      String
+  photoUrl  String?
+  bio       String?
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  courses Course[]
+
+  @@index([subjectId])
+}
+
+model Course {
+  id        String   @id @default(uuid())
+  teacherId String
+  teacher   Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  title     String // e.g. "شهر أكتوبر"
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  days CourseDay[]
+
+  @@index([teacherId])
+}
+
+model CourseDay {
+  id        String   @id @default(uuid())
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title     String // e.g. "اليوم الأول"
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  lessons Lesson[]
+
+  @@index([courseId])
+}
+
+model Lesson {
+  id        String   @id @default(uuid())
+  dayId     String
+  day       CourseDay @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  title     String // e.g. "الحصة الأولى"
+  videoUrl  String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([dayId])
+}

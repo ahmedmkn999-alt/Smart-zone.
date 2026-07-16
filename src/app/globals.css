@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Cairo:wght@500;700;800;900&family=Tajawal:wght@400;500;700&display=swap");
+
+:root {
+  --ice: #6fc9ff;
+  --ice-dim: #4d7ba3;
+}
+
+html,
+body {
+  background: #05070c;
+  color: #e3e8ee;
+}
+
+body {
+  font-family: "Tajawal", sans-serif;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: "Cairo", sans-serif;
+}
+
+::selection {
+  background: rgba(111, 201, 255, 0.3);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(111, 201, 255, 0.16);
+  border-radius: 22px;
+}
+
+.btn-primary {
+  background: var(--ice);
+  color: #04101c;
+}
+
+.mini-btn {
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid currentColor;
+  opacity: 0.9;
+}
+.mini-btn:hover {
+  opacity: 1;
+}
